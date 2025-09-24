@@ -1,5 +1,5 @@
 polygon:
-  api_key: "YOUR_POLYGON_API_KEY"
+  api_key: "NYCC42yuxSt_4fy1BiIm4xW2THpXSR0M"
 data:
   keep_days: 260  # how many days of data to keep for each ticker
   discard_old_data: true  # enable/disable discarding old data
@@ -30,8 +30,5 @@ buckets:
   long_term: 2000
   options: 500
 tickers:
-  - AAPL
-  - MSFT
-  - TSLA
-  - NVDA
-  - AMZN
+  - TQQQ
+  - SQQQ

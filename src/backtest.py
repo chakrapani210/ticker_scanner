@@ -26,33 +26,78 @@ def simulate_account(trades, initial_amount, data):
             trade_log.append({'type': 'sell', 'price': price, 'qty': qty, 'balance': balance, 'strategy': trade.get('strategy'), 'success': True, 'reason': trade.get('reason')})
     return balance, trade_log
 
+def rolling_backtest(strategy_manager, data, initial_amount, lookback_days=365):
+    # data: DataFrame with at least 2 years of daily data
+    # Simulate starting 1 year ago, rolling forward day by day
+    from collections import defaultdict
+    account = initial_amount
+    trade_log = []
+    strategy_stats = defaultdict(lambda: {'success': 0, 'fail': 0})
+    # Only start after lookback_days (so indicators have enough data)
+    for i in range(lookback_days, len(data)):
+        window = data.iloc[:i+1]  # up to and including day i
+        signals = strategy_manager.run(window, 'short_term')
+        for s in signals:
+            # Only act if the signal is for the current day
+            if s.get('index', window.index[-1]) == window.index[-1]:
+                price = window['c'].iloc[-1]
+                qty = s.get('qty', 1)
+                if s['action'] == 'buy' and account >= price * qty:
+                    account -= price * qty
+                    trade_log.append({'type': 'buy', 'price': price, 'qty': qty, 'balance': account, 'strategy': s.get('strategy'), 'success': True, 'reason': s.get('reason'), 'date': window.index[-1]})
+                    strategy_stats[s.get('strategy')]['success'] += 1
+                elif s['action'] == 'sell':
+                    account += price * qty
+                    trade_log.append({'type': 'sell', 'price': price, 'qty': qty, 'balance': account, 'strategy': s.get('strategy'), 'success': True, 'reason': s.get('reason'), 'date': window.index[-1]})
+                    strategy_stats[s.get('strategy')]['success'] += 1
+                else:
+                    trade_log.append({'type': s['action'], 'price': price, 'qty': qty, 'balance': account, 'strategy': s.get('strategy'), 'success': False, 'reason': 'Insufficient funds', 'date': window.index[-1]})
+                    strategy_stats[s.get('strategy')]['fail'] += 1
+    return account, trade_log, strategy_stats
+
 def main():
     # Load config from YAML
     with open('config.yaml', 'r') as f:
         config = yaml.safe_load(f)
 
-    tickers = config.get('tickers', ['TQQQ', 'SQQQ'])
+    # Read backtest config
+    backtest_cfg = config.get('backtest', {})
+    years_of_data = float(backtest_cfg.get('years_of_data', 1))
+    years_to_backtest = float(backtest_cfg.get('years_to_backtest', 0.5))
+    days_of_data = int(years_of_data * 365)
+    days_to_backtest = int(years_to_backtest * 365)
     end_date = datetime.date.today()
-    start_date = end_date - datetime.timedelta(days=365)
+    start_date = end_date - datetime.timedelta(days=days_of_data)
+    lookback_days = days_of_data - days_to_backtest
+
+    tickers = config.get('tickers', ['TQQQ', 'SQQQ'])
     initial_amount = 10000
     market_data = MarketData('config.yaml')
     strategy_manager = StrategyManager(config)
 
-    all_trades = []
     for ticker in tickers:
-        print(f"--- Backtesting for {ticker} ---")
+        print(f"--- Rolling Backtest for {ticker} ---")
+        # Force fresh download: ignore cache by deleting cache file if exists
+        import os
+        cache_path = f"market_cache/{ticker}_day_365.pkl"
+        if os.path.exists(cache_path):
+            os.remove(cache_path)
         data = market_data.fetch(ticker, start_date, end_date)
-        if data is None or data.empty:
-            print(f"No data for {ticker}")
+        if data is None or data.empty or len(data) < 190:
+            print(f"Not enough data for {ticker}")
             continue
-        signals = strategy_manager.run(data, 'short_term', ticker)
-        # Attach index to each trade for price lookup
-        for s in signals:
-            s['index'] = data['c'].index[-1] if hasattr(data['c'], 'index') else -1
-        final_balance, trade_log = simulate_account(signals, initial_amount, data)
-        all_trades.extend([{'ticker': ticker, **t} for t in trade_log])
+        # Ensure index is datetime for reporting
+        if not hasattr(data.index, 'tz'):
+            data.index = pd.to_datetime(data['t'], unit='ms')
+        final_balance, trade_log, strategy_stats = rolling_backtest(strategy_manager, data, initial_amount, lookback_days=lookback_days)
+        # Collect all trades for summary
+        if 'all_trades' not in locals():
+            all_trades = []
+        all_trades.extend(trade_log)
         print(f"  Final Account Balance: ${final_balance:.2f}")
         print(f"  Trades: {len(trade_log)}")
+        print(f"  Strategy Stats: {dict(strategy_stats)}")
+        print(f"  Trade Log (last 5): {trade_log[-5:]}")
         wins = [t for t in trade_log if t['success']]
         fails = [t for t in trade_log if not t['success']]
         print(f"  Successful Trades: {len(wins)}")
@@ -61,22 +106,23 @@ def main():
             print(f"    FAIL: {fail}")
 
     # Performance summary
-    print("\n--- Performance Report ---")
-    total_wins = [t for t in all_trades if t['success']]
-    total_fails = [t for t in all_trades if not t['success']]
-    print(f"Total Trades: {len(all_trades)}")
-    print(f"Total Successful Trades: {len(total_wins)}")
-    print(f"Total Failed Trades: {len(total_fails)}")
-    print(f"Strategies Used: {set(t['strategy'] for t in all_trades)}")
-    print("Failed Trades Details:")
-    for fail in total_fails:
-        print(fail)
-    print("\nStrategy Success/Fail Counts:")
-    from collections import Counter
-    strat_counter = Counter([t['strategy'] for t in total_wins])
-    strat_fail_counter = Counter([t['strategy'] for t in total_fails])
-    for strat in set(strat_counter.keys()).union(strat_fail_counter.keys()):
-        print(f"{strat}: Success={strat_counter.get(strat,0)}, Fail={strat_fail_counter.get(strat,0)}")
+    if 'all_trades' in locals() and all_trades:
+        print("\n--- Performance Report ---")
+        total_wins = [t for t in all_trades if t['success']]
+        total_fails = [t for t in all_trades if not t['success']]
+        print(f"Total Trades: {len(all_trades)}")
+        print(f"Total Successful Trades: {len(total_wins)}")
+        print(f"Total Failed Trades: {len(total_fails)}")
+        print(f"Strategies Used: {set(t['strategy'] for t in all_trades)}")
+        print("Failed Trades Details:")
+        for fail in total_fails:
+            print(fail)
+        print("\nStrategy Success/Fail Counts:")
+        from collections import Counter
+        strat_counter = Counter([t['strategy'] for t in total_wins])
+        strat_fail_counter = Counter([t['strategy'] for t in total_fails])
+        for strat in set(strat_counter.keys()).union(strat_fail_counter.keys()):
+            print(f"{strat}: Success={strat_counter.get(strat,0)}, Fail={strat_fail_counter.get(strat,0)}")
 
 if __name__ == "__main__":
     main()

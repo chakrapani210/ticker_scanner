@@ -3,7 +3,7 @@ import pandas as pd
 class TickerScanner:
     def __init__(self, config):
         self.config = config
-        self.tickers = config.get('tickers', ['AAPL', 'MSFT', 'TSLA', 'NVDA', 'AMZN'])
+        self.tickers = getattr(config, 'tickers', ['AAPL', 'MSFT', 'TSLA', 'NVDA', 'AMZN'])
 
     def scan(self, fetch_func):
         bullish = []

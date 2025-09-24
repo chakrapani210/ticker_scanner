@@ -3,7 +3,8 @@ from webull import paper_webull
 class BrokerageManager:
     def __init__(self, config):
         self.webull = paper_webull()
-        self.webull.login(config['username'], config['password'])
+        webull_cfg = getattr(config, 'webull', {})
+        self.webull.login(webull_cfg.get('username', ''), webull_cfg.get('password', ''))
 
     def place_order(self, signal, bucket):
         # Market buy

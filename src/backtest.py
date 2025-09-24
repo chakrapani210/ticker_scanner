@@ -4,6 +4,7 @@ from src.core.data import MarketData
 from src.core.strategy import StrategyManager
 from src.core.scanner import TickerScanner
 from tests.test_backtest import run_backtest
+from src.core.config import Config
 
 def simulate_account(trades, initial_amount, data):
     balance = initial_amount
@@ -57,11 +58,10 @@ def rolling_backtest(strategy_manager, data, initial_amount, lookback_days=365):
 
 def main():
     # Load config from YAML
-    with open('config.yaml', 'r') as f:
-        config = yaml.safe_load(f)
+    config = Config.load('config.yaml')
 
     # Read backtest config
-    backtest_cfg = config.get('backtest', {})
+    backtest_cfg = config.backtest or {}
     years_of_data = float(backtest_cfg.get('years_of_data', 1))
     years_to_backtest = float(backtest_cfg.get('years_to_backtest', 0.5))
     days_of_data = int(years_of_data * 365)
@@ -70,9 +70,9 @@ def main():
     start_date = end_date - datetime.timedelta(days=days_of_data)
     lookback_days = days_of_data - days_to_backtest
 
-    tickers = config.get('tickers', ['TQQQ', 'SQQQ'])
+    tickers = config.tickers or ['TQQQ', 'SQQQ']
     initial_amount = 10000
-    market_data = MarketData('config.yaml')
+    market_data = MarketData(config)
     strategy_manager = StrategyManager(config)
 
     for ticker in tickers:

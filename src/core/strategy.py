@@ -12,8 +12,8 @@ class StrategyManager:
             'trend_reversal': True
         }
         # Others configurable
-        config_enabled = config.get('enabled', {})
-        self.enabled_strategies = {**config_enabled, **always_on}
+        config_enabled = getattr(config, 'strategies', {})
+        self.enabled_strategies = {**always_on, **config_enabled}
         # For efficiency tracking
         self.stats = {k: {'success': 0, 'fail': 0} for k in self.enabled_strategies}
 

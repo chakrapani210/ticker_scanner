@@ -2,7 +2,8 @@ from src.core.scanner import TickerScanner
 import pandas as pd
 
 def test_scanner_bullish_bearish():
-    config = {'tickers': ['A', 'B']}
+    from src.core.config import Config
+    config = Config(tickers=['A', 'B'])
     scanner = TickerScanner(config)
     def fake_fetch(ticker):
         # A is bullish, B is bearish

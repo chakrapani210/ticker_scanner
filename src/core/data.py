@@ -8,26 +8,21 @@ import time
 
 import json
 from .rate_limiter import RateLimiter
+from .config import Config
 
 class MarketData:
-    def __init__(self, config_path='config.yaml'):
-        with open(config_path, 'r') as f:
-            self.config = yaml.safe_load(f)
-        
-        self.api_key = self.config.get('polygon', {}).get('api_key')
+    def __init__(self, config: Config):
+        self.config = config
+        self.api_key = self.config.polygon.get('api_key')
         if not self.api_key or self.api_key == "YOUR_POLYGON_API_KEY":
             raise ValueError("Polygon API key is not configured or is a placeholder. Please set it in your config.yaml.")
         print(f"Loaded Polygon API key: '{self.api_key}'")
-            
         self.base_url = 'https://api.polygon.io/v2/aggs/ticker/'
-        
-        self.cache_dir = self.config.get('data_cache_dir', 'market_cache')
-        self.cache_expiry_days = self.config.get('cache_expiry_days', 3)
-        
-        data_cfg = self.config.get('data', {})
+        self.cache_dir = self.config.data.get('data_cache_dir', 'market_cache')
+        self.cache_expiry_days = self.config.data.get('cache_expiry_days', 3)
+        data_cfg = self.config.data
         self.keep_days = data_cfg.get('keep_days', 260)
         self.discard_old_data = data_cfg.get('discard_old_data', True)
-        
         self.meta_path = os.path.join(self.cache_dir, 'meta.json')
         os.makedirs(self.cache_dir, exist_ok=True)
         

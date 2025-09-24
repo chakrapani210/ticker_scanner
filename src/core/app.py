@@ -5,17 +5,16 @@ from .brokerage import BrokerageManager
 from .buckets import BucketManager
 from .tracker import PerformanceTracker
 from .scanner import TickerScanner
+from .config import Config
 
-def run_trading_app():
-    # Load config
-    with open('config.yaml', 'r') as f:
-        config = yaml.safe_load(f)
-
+def run_trading_app(config: Config = None):
+    if config is None:
+        config = Config.load('config.yaml')
     # Initialize components
-    data = MarketData(config['polygon'])
-    strategies = StrategyManager(config['strategies'])
-    brokerage = BrokerageManager(config['webull'])
-    buckets = BucketManager(config['buckets'])
+    data = MarketData(config)
+    strategies = StrategyManager(config)
+    brokerage = BrokerageManager(config)
+    buckets = BucketManager(config)
     tracker = PerformanceTracker()
     scanner = TickerScanner(config)
 

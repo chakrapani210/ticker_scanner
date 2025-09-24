@@ -215,7 +215,7 @@ class StrategyManager:
                 print(f"{strat}: {res['success']} wins / {total} signals ({pct:.1f}% win rate)")
             else:
                 print(f"{strat}: No signals yet.")
-        return signals
+        return None
 
     def explain(self, signal):
         base = f"Order: {signal['action']} {signal['qty']} {signal['ticker']} because {signal['reason']}"

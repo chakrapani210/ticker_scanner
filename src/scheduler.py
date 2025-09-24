@@ -1,6 +1,7 @@
+
 import schedule
 import time
-from core.app import run_trading_app
+from src.core.app import run_trading_app
 
 def main():
     schedule.every().day.at("09:30").do(run_trading_app)

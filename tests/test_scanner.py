@@ -7,9 +7,11 @@ def test_scanner_bullish_bearish():
     def fake_fetch(ticker):
         # A is bullish, B is bearish
         if ticker == 'A':
-            return pd.DataFrame({'c': [100]*10 + [101]*10 + [102]*10 + [103, 104, 105, 106, 107, 108, 109, 110, 111, 112]})
+            # Gently increasing series with some dips to keep RSI down but SMAs up
+            return pd.DataFrame({'c': [100]*26 + [105, 104, 105, 104, 105, 106, 107, 106, 107, 108, 107, 108, 109, 110]})
         else:
-            return pd.DataFrame({'c': [80] + [100]*29})
+            # Sharply decreasing series
+            return pd.DataFrame({'c': [110]*26 + [109, 108, 107, 106, 105, 104, 103, 102, 101, 100, 99, 98, 97, 96]})
     result = scanner.scan(fake_fetch)
     assert 'A' in result['bullish']
     assert 'B' in result['bearish']

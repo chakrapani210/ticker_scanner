@@ -1,0 +1,4 @@
+{"AAPL_day_260": 1758677126, "MSFT_day_260": 1758677127, "TSLA_day_260": 1758677127, "NVDA_day_260": 1758677127, "AMZN_day_260": 1758677127, "TQQQ_day_260": 1758678153, "SQQQ_day_260": 1758678153}
+
+// For each ticker, add a date range for the cached data
+// Example: {"TQQQ_day_365": {"start": "2024-09-23", "end": "2025-09-23", "last_updated": 1758677341}, ...}

@@ -1,0 +1,7 @@
+requests
+webull
+pyyaml
+pandas
+schedule
+pytest
+pytest-cov

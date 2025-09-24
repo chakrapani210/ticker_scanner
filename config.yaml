@@ -1,0 +1,37 @@
+polygon:
+  api_key: "YOUR_POLYGON_API_KEY"
+data:
+  keep_days: 260  # how many days of data to keep for each ticker
+  discard_old_data: true  # enable/disable discarding old data
+webull:
+  username: "YOUR_WEBULL_USERNAME"
+  password: "YOUR_WEBULL_PASSWORD"
+buckets:
+  short_term: 1000
+  long_term: 2000
+  options: 500
+strategies:
+  enabled:
+    sma_rsi_combo: true
+    rsi_reversal: true
+    volume_surge: true
+    gap_up: true
+    gap_down: true
+    macd_bullish: true
+    macd_bearish: true
+    breakout_high: true
+    breakout_low: true
+    bullish_engulfing: true
+    trend_following: true
+    trend_reversal: true
+    momentum_options: true
+buckets:
+  short_term: 1000
+  long_term: 2000
+  options: 500
+tickers:
+  - AAPL
+  - MSFT
+  - TSLA
+  - NVDA
+  - AMZN

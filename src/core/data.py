@@ -69,36 +69,69 @@ class MarketData:
             else:
                 os.remove(cache_path)
         
-        # If we have cached data, try to fetch only new (diff) data
-        if df is not None and not df.empty:
-            last_timestamp = int(df.iloc[0]['t'])
-            from datetime import datetime, timedelta
-            # Fetch from the day after the last recorded date
-            last_date = datetime.utcfromtimestamp(last_timestamp / 1000) + timedelta(days=1)
-            fetch_start_date_str = last_date.strftime('%Y-%m-%d')
-            fetch_end_date_str = end_date.strftime('%Y-%m-%d')
+        # Check meta for cached date range
+        meta_key = f'{ticker}_{timespan}_{self.keep_days}'
+        cached_range = self.meta.get(meta_key, {})
+        cached_start = pd.to_datetime(cached_range.get('start')) if 'start' in cached_range else None
+        cached_end = pd.to_datetime(cached_range.get('end')) if 'end' in cached_range else None
 
-            # Only fetch if the start date is not after the end date
-            if last_date.date() < end_date:
-                url = f"{self.base_url}{ticker}/range/1/{timespan}/{fetch_start_date_str}/{fetch_end_date_str}?adjusted=true&sort=desc&limit=50000&apiKey={self.api_key}"
-                resp = requests.get(url)
-                resp.raise_for_status()
-                new_data = resp.json().get('results', [])
-                if new_data:
-                    new_df = pd.DataFrame(new_data)
+        # If cache exists and we need more recent data, fetch only the diff
+        if cached_end is not None and end_date > cached_end.date():
+            fetch_start_date = cached_end.date() + pd.Timedelta(days=1)
+            fetch_end_date = end_date
+            url = f"{self.base_url}{ticker}/range/1/{timespan}/{fetch_start_date}/{fetch_end_date}?adjusted=true&sort=desc&limit=50000&apiKey={self.api_key}"
+            resp = requests.get(url)
+            resp.raise_for_status()
+            new_data = resp.json().get('results', [])
+            if new_data:
+                new_df = pd.DataFrame(new_data)
+                if df is not None and not df.empty:
                     new_df = new_df[~new_df['t'].isin(df['t'])]
                     if not new_df.empty:
                         df = pd.concat([new_df, df], ignore_index=True).sort_values('t', ascending=False).reset_index(drop=True)
+                else:
+                    df = new_df
+                # Update meta with new end date
+                if not df.empty:
+                    start_dt = pd.to_datetime(df['t'].iloc[-1], unit='ms').strftime('%Y-%m-%d')
+                    end_dt = pd.to_datetime(df['t'].iloc[0], unit='ms').strftime('%Y-%m-%d')
+                    self.meta[meta_key] = {
+                        'start': start_dt,
+                        'end': end_dt,
+                        'last_updated': int(time.time())
+                    }
+                    self._save_meta()
         else:
-            # No cache, fetch all for the requested range
-            start_date_str = start_date.strftime('%Y-%m-%d')
-            end_date_str = end_date.strftime('%Y-%m-%d')
-            url = f"{self.base_url}{ticker}/range/1/{timespan}/{start_date_str}/{end_date_str}?adjusted=true&sort=desc&limit=50000&apiKey={self.api_key}"
-            resp = requests.get(url)
-            resp.raise_for_status()
-            data = resp.json().get('results', [])
-            if data:
-                df = pd.DataFrame(data)
+            # If we have cached data, try to fetch only new (diff) data
+            if df is not None and not df.empty:
+                last_timestamp = int(df.iloc[0]['t'])
+                from datetime import datetime, timedelta
+                # Fetch from the day after the last recorded date
+                last_date = datetime.utcfromtimestamp(last_timestamp / 1000) + timedelta(days=1)
+                fetch_start_date_str = last_date.strftime('%Y-%m-%d')
+                fetch_end_date_str = end_date.strftime('%Y-%m-%d')
+
+                # Only fetch if the start date is not after the end date
+                if last_date.date() < end_date:
+                    url = f"{self.base_url}{ticker}/range/1/{timespan}/{fetch_start_date_str}/{fetch_end_date_str}?adjusted=true&sort=desc&limit=50000&apiKey={self.api_key}"
+                    resp = requests.get(url)
+                    resp.raise_for_status()
+                    new_data = resp.json().get('results', [])
+                    if new_data:
+                        new_df = pd.DataFrame(new_data)
+                        new_df = new_df[~new_df['t'].isin(df['t'])]
+                        if not new_df.empty:
+                            df = pd.concat([new_df, df], ignore_index=True).sort_values('t', ascending=False).reset_index(drop=True)
+            else:
+                # No cache, fetch all for the requested range
+                start_date_str = start_date.strftime('%Y-%m-%d')
+                end_date_str = end_date.strftime('%Y-%m-%d')
+                url = f"{self.base_url}{ticker}/range/1/{timespan}/{start_date_str}/{end_date_str}?adjusted=true&sort=desc&limit=50000&apiKey={self.api_key}"
+                resp = requests.get(url)
+                resp.raise_for_status()
+                data = resp.json().get('results', [])
+                if data:
+                    df = pd.DataFrame(data)
 
         # Purge old data and filter date range
         if df is not None and not df.empty:
@@ -118,9 +151,15 @@ class MarketData:
             self._cache[cache_key] = df
             with open(cache_path, 'wb') as f:
                 pickle.dump(df, f)
-            
+            # Save meta with date range
             if not df.empty:
-                self.meta[f'{ticker}_{timespan}_{self.keep_days}'] = int(time.time())
+                start_dt = pd.to_datetime(df['t'].iloc[-1], unit='ms').strftime('%Y-%m-%d')
+                end_dt = pd.to_datetime(df['t'].iloc[0], unit='ms').strftime('%Y-%m-%d')
+                self.meta[f'{ticker}_{timespan}_{self.keep_days}'] = {
+                    'start': start_dt,
+                    'end': end_dt,
+                    'last_updated': int(time.time())
+                }
                 self._save_meta()
         
         return df

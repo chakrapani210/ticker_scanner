@@ -1,25 +1,37 @@
 import requests
 import pandas as pd
+import yaml
 
 import os
 import pickle
 import time
 
 import json
+from .rate_limiter import RateLimiter
 
 class MarketData:
-    def __init__(self, config):
-        self.api_key = config['api_key']
+    def __init__(self, config_path='config.yaml'):
+        with open(config_path, 'r') as f:
+            self.config = yaml.safe_load(f)
+        
+        self.api_key = self.config.get('polygon', {}).get('api_key')
+        if not self.api_key or self.api_key == "YOUR_POLYGON_API_KEY":
+            raise ValueError("Polygon API key is not configured or is a placeholder. Please set it in your config.yaml.")
+        print(f"Loaded Polygon API key: '{self.api_key}'")
+            
         self.base_url = 'https://api.polygon.io/v2/aggs/ticker/'
-        self._cache = {}
-        self.cache_dir = config.get('cache_dir', 'market_cache')
-        self.cache_expiry_days = config.get('cache_expiry_days', 3)  # default: 3 days
-        # Data retention configs
-        data_cfg = config.get('data', {})
+        
+        self.cache_dir = self.config.get('data_cache_dir', 'market_cache')
+        self.cache_expiry_days = self.config.get('cache_expiry_days', 3)
+        
+        data_cfg = self.config.get('data', {})
         self.keep_days = data_cfg.get('keep_days', 260)
         self.discard_old_data = data_cfg.get('discard_old_data', True)
+        
         self.meta_path = os.path.join(self.cache_dir, 'meta.json')
         os.makedirs(self.cache_dir, exist_ok=True)
+        
+        self._cache = {}
         self.cleanup_cache()
         self._load_meta()
 
@@ -37,10 +49,13 @@ class MarketData:
     def _cache_path(self, ticker, timespan, limit):
         return os.path.join(self.cache_dir, f"{ticker}_{timespan}_{limit}.pkl")
 
-    def fetch_daily(self, ticker='AAPL', timespan='day', limit=30):
-        cache_key = (ticker, timespan, limit)
-        cache_path = self._cache_path(ticker, timespan, limit)
-        last_fetched = self.meta.get(f'{ticker}_{timespan}_{limit}', None)
+    def fetch(self, ticker, start_date, end_date):
+        timespan = 'day'
+        # Use a cache key that is independent of the exact date range for broader reusability
+        cache_key = (ticker, timespan, self.keep_days)
+        cache_path = self._cache_path(ticker, timespan, self.keep_days)
+        
+        df = None
         # Try in-memory cache first
         if cache_key in self._cache:
             df = self._cache[cache_key]
@@ -53,52 +68,61 @@ class MarketData:
                 self._cache[cache_key] = df
             else:
                 os.remove(cache_path)
-                df = None
-        else:
-            df = None
-
+        
         # If we have cached data, try to fetch only new (diff) data
         if df is not None and not df.empty:
-            # Polygon returns data sorted desc, so first row is latest
             last_timestamp = int(df.iloc[0]['t'])
-            # Convert ms to date string for API
             from datetime import datetime, timedelta
-            last_date = datetime.utcfromtimestamp(last_timestamp / 1000).strftime('%Y-%m-%d')
-            url = f"{self.base_url}{ticker}/range/1/{timespan}/{last_date}/{datetime.utcnow().strftime('%Y-%m-%d')}?adjusted=true&sort=desc&limit={limit}&apiKey={self.api_key}"
-            resp = requests.get(url)
-            resp.raise_for_status()
-            new_data = resp.json().get('results', [])
-            if new_data:
-                new_df = pd.DataFrame(new_data)
-                # Remove any overlap (same timestamp)
-                new_df = new_df[~new_df['t'].isin(df['t'])]
-                if not new_df.empty:
-                    df = pd.concat([new_df, df], ignore_index=True).sort_values('t', ascending=False).reset_index(drop=True)
+            # Fetch from the day after the last recorded date
+            last_date = datetime.utcfromtimestamp(last_timestamp / 1000) + timedelta(days=1)
+            fetch_start_date_str = last_date.strftime('%Y-%m-%d')
+            fetch_end_date_str = end_date.strftime('%Y-%m-%d')
+
+            # Only fetch if the start date is not after the end date
+            if last_date.date() < end_date:
+                url = f"{self.base_url}{ticker}/range/1/{timespan}/{fetch_start_date_str}/{fetch_end_date_str}?adjusted=true&sort=desc&limit=50000&apiKey={self.api_key}"
+                resp = requests.get(url)
+                resp.raise_for_status()
+                new_data = resp.json().get('results', [])
+                if new_data:
+                    new_df = pd.DataFrame(new_data)
+                    new_df = new_df[~new_df['t'].isin(df['t'])]
+                    if not new_df.empty:
+                        df = pd.concat([new_df, df], ignore_index=True).sort_values('t', ascending=False).reset_index(drop=True)
         else:
-            # No cache, fetch all
-            url = f"{self.base_url}{ticker}/range/1/{timespan}/2023-01-01/2025-12-31?adjusted=true&sort=desc&limit={limit}&apiKey={self.api_key}"
+            # No cache, fetch all for the requested range
+            start_date_str = start_date.strftime('%Y-%m-%d')
+            end_date_str = end_date.strftime('%Y-%m-%d')
+            url = f"{self.base_url}{ticker}/range/1/{timespan}/{start_date_str}/{end_date_str}?adjusted=true&sort=desc&limit=50000&apiKey={self.api_key}"
             resp = requests.get(url)
             resp.raise_for_status()
             data = resp.json().get('results', [])
-            df = pd.DataFrame(data)
+            if data:
+                df = pd.DataFrame(data)
 
-        # Purge old data if enabled: keep only the most recent N days
-        if not df.empty and self.discard_old_data:
-            df = df.sort_values('t', ascending=False)
-            # Convert ms timestamp to date (naive)
-            df['date'] = pd.to_datetime(df['t'], unit='ms').dt.tz_localize(None)
-            cutoff = pd.Timestamp.now() - pd.Timedelta(days=self.keep_days)
-            df = df[df['date'] >= cutoff].reset_index(drop=True)
+        # Purge old data and filter date range
+        if df is not None and not df.empty:
+            df['date'] = pd.to_datetime(df['t'], unit='ms').dt.date
+            
+            # Filter for the requested backtest date range
+            df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
+
+            # Discard data older than keep_days from today, to manage cache size
+            if self.discard_old_data:
+                cutoff_date = (pd.Timestamp.now() - pd.Timedelta(days=self.keep_days)).date()
+                df = df[df['date'] >= cutoff_date].reset_index(drop=True)
+
             df = df.drop(columns=['date'])
 
-        # Update cache and meta
-        self._cache[cache_key] = df
-        with open(cache_path, 'wb') as f:
-            pickle.dump(df, f)
-        # Mark last fetch time
-        if not df.empty:
-            self.meta[f'{ticker}_{timespan}_{limit}'] = int(time.time())
-            self._save_meta()
+            # Update cache and meta
+            self._cache[cache_key] = df
+            with open(cache_path, 'wb') as f:
+                pickle.dump(df, f)
+            
+            if not df.empty:
+                self.meta[f'{ticker}_{timespan}_{self.keep_days}'] = int(time.time())
+                self._save_meta()
+        
         return df
 
     def cleanup_cache(self):

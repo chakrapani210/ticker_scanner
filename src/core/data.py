@@ -25,7 +25,10 @@ class MarketData:
         self.discard_old_data = data_cfg.get('discard_old_data', True)
         self.meta_path = os.path.join(self.cache_dir, 'meta.json')
         os.makedirs(self.cache_dir, exist_ok=True)
-        
+
+        self.force_full_fetch = self.config.data.get('force_full_fetch', False)
+        self.discard_years = self.config.data.get('discard_years', 3)
+
         self._cache = {}
         self.cleanup_cache()
         self._load_meta()
@@ -69,12 +72,35 @@ class MarketData:
         cached_range = self.meta.get(meta_key, {})
         cached_start = pd.to_datetime(cached_range.get('start')) if 'start' in cached_range else None
         cached_end = pd.to_datetime(cached_range.get('end')) if 'end' in cached_range else None
+        print(f"[MarketData] fetch() ticker={ticker}")
+        print(f"[MarketData]   start_date={start_date}, end_date={end_date}")
+        print(f"[MarketData]   cached_start={cached_start}, cached_end={cached_end}")
 
+        # If force_full_fetch is set, always fetch the full range
+        if self.force_full_fetch:
+            start_date_str = start_date.strftime('%Y-%m-%d')
+            end_date_str = end_date.strftime('%Y-%m-%d')
+            print(f"[MarketData] [FORCE] start_date_str={start_date_str}, end_date_str={end_date_str}")
+            url = f"{self.base_url}{ticker}/range/1/{timespan}/{start_date_str}/{end_date_str}?adjusted=true&sort=desc&limit=50000&apiKey={self.api_key}"
+            print(f"[MarketData] [FORCE] Fetching (full) URL: {url}")
+            resp = requests.get(url)
+            resp.raise_for_status()
+            raw_json = resp.json()
+            print(f"[MarketData] [FORCE] Raw API response keys: {list(raw_json.keys())}")
+            print(f"[MarketData] [FORCE] Raw API response: {str(raw_json)[:500]}")
+            data = raw_json.get('results', [])
+            print(f"[MarketData] [FORCE] Results length: {len(data)}")
+            if data:
+                df = pd.DataFrame(data)
+                print(f"[MarketData] [FORCE] DataFrame shape after load: {df.shape}")
+                print(f"[MarketData] [FORCE] DataFrame head:\n{df.head()}")
         # If cache exists and we need more recent data, fetch only the diff
-        if cached_end is not None and end_date > cached_end.date():
+        elif cached_end is not None and end_date > cached_end.date():
             fetch_start_date = cached_end.date() + pd.Timedelta(days=1)
-            fetch_end_date = end_date
+            fetch_end_date = fetch_start_date  # Only fetch one day
+            print(f"[MarketData]   fetch_start_date={fetch_start_date}, fetch_end_date={fetch_end_date}")
             url = f"{self.base_url}{ticker}/range/1/{timespan}/{fetch_start_date}/{fetch_end_date}?adjusted=true&sort=desc&limit=50000&apiKey={self.api_key}"
+            print(f"[MarketData] Fetching (diff) URL: {url}")
             resp = requests.get(url)
             resp.raise_for_status()
             new_data = resp.json().get('results', [])
@@ -105,10 +131,12 @@ class MarketData:
                 last_date = datetime.utcfromtimestamp(last_timestamp / 1000) + timedelta(days=1)
                 fetch_start_date_str = last_date.strftime('%Y-%m-%d')
                 fetch_end_date_str = end_date.strftime('%Y-%m-%d')
+                print(f"[MarketData]   last_date={last_date}, fetch_start_date_str={fetch_start_date_str}, fetch_end_date_str={fetch_end_date_str}")
 
                 # Only fetch if the start date is not after the end date
                 if last_date.date() < end_date:
                     url = f"{self.base_url}{ticker}/range/1/{timespan}/{fetch_start_date_str}/{fetch_end_date_str}?adjusted=true&sort=desc&limit=50000&apiKey={self.api_key}"
+                    print(f"[MarketData] Fetching (diff2) URL: {url}")
                     resp = requests.get(url)
                     resp.raise_for_status()
                     new_data = resp.json().get('results', [])
@@ -121,7 +149,9 @@ class MarketData:
                 # No cache, fetch all for the requested range
                 start_date_str = start_date.strftime('%Y-%m-%d')
                 end_date_str = end_date.strftime('%Y-%m-%d')
+                print(f"[MarketData]   start_date_str={start_date_str}, end_date_str={end_date_str}")
                 url = f"{self.base_url}{ticker}/range/1/{timespan}/{start_date_str}/{end_date_str}?adjusted=true&sort=desc&limit=50000&apiKey={self.api_key}"
+                print(f"[MarketData] Fetching (full) URL: {url}")
                 resp = requests.get(url)
                 resp.raise_for_status()
                 data = resp.json().get('results', [])
@@ -135,9 +165,10 @@ class MarketData:
             # Filter for the requested backtest date range
             df = df[(df['date'] >= start_date) & (df['date'] <= end_date)]
 
-            # Discard data older than keep_days from today, to manage cache size
+            # Discard data older than discard_years from today, to manage cache size
             if self.discard_old_data:
-                cutoff_date = (pd.Timestamp.now() - pd.Timedelta(days=self.keep_days)).date()
+                cutoff_days = int(self.discard_years * 365)
+                cutoff_date = (pd.Timestamp.now() - pd.Timedelta(days=cutoff_days)).date()
                 df = df[df['date'] >= cutoff_date].reset_index(drop=True)
 
             df = df.drop(columns=['date'])

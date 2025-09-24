@@ -1,3 +1,4 @@
+import pandas as pd
 import datetime
 import yaml
 from src.core.data import MarketData
@@ -35,8 +36,10 @@ def rolling_backtest(strategy_manager, data, initial_amount, lookback_days=365):
     trade_log = []
     strategy_stats = defaultdict(lambda: {'success': 0, 'fail': 0})
     # Only start after lookback_days (so indicators have enough data)
+    print(f"[DEBUG] lookback_days={lookback_days}, len(data)={len(data)}")
     for i in range(lookback_days, len(data)):
         window = data.iloc[:i+1]  # up to and including day i
+        print(f"[DEBUG] Calling strategy_manager.run for window ending at index {i}, date={window.index[-1] if hasattr(window, 'index') else 'N/A'}")
         signals = strategy_manager.run(window, 'short_term')
         for s in signals:
             # Only act if the signal is for the current day
@@ -68,7 +71,7 @@ def main():
     days_to_backtest = int(years_to_backtest * 365)
     end_date = datetime.date.today()
     start_date = end_date - datetime.timedelta(days=days_of_data)
-    lookback_days = days_of_data - days_to_backtest
+    # Ensure lookback_days is never greater than available data
 
     tickers = config.tickers or ['TQQQ', 'SQQQ']
     initial_amount = 10000
@@ -83,12 +86,15 @@ def main():
         if os.path.exists(cache_path):
             os.remove(cache_path)
         data = market_data.fetch(ticker, start_date, end_date)
+        print(f"Data lenght: {len(data)}")
         if data is None or data.empty or len(data) < 190:
             print(f"Not enough data for {ticker}")
             continue
         # Ensure index is datetime for reporting
         if not hasattr(data.index, 'tz'):
             data.index = pd.to_datetime(data['t'], unit='ms')
+        # Calculate lookback_days after data is loaded
+        lookback_days = max(0, min(days_of_data - days_to_backtest, len(data) - 1))
         final_balance, trade_log, strategy_stats = rolling_backtest(strategy_manager, data, initial_amount, lookback_days=lookback_days)
         # Collect all trades for summary
         if 'all_trades' not in locals():

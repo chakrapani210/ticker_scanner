@@ -18,6 +18,7 @@ class StrategyManager:
         self.stats = {k: {'success': 0, 'fail': 0} for k in self.enabled_strategies}
 
     def run(self, daily_data, bucket_name, ticker=None):
+        print(f"[DEBUG] StrategyManager.run called for ticker={ticker}, bucket={bucket_name}, data_len={len(daily_data) if hasattr(daily_data, '__len__') else 'N/A'}")
         signals = []
         close = daily_data['c']
         if bucket_name == 'short_term':
@@ -192,6 +193,7 @@ class StrategyManager:
                         'ticker': ticker
                     })
 
+        print(f"[DEBUG] signals generated: {signals}")
         return signals
 
     def compute_macd(self, series, fast=12, slow=26, signal=9):
